@@ -16,7 +16,7 @@ For required libraries and their versions see **requirements.txt**.
 1. Start from cloning script to your system:
 `git clone https://github.com/sesazhin/cisco-fmc.git`
 
-2. Install required libraries using requirements,txt file:
+2. Install required libraries using requirements.txt file:
 `pip3.exe install -r requirements.txt`
 
 3. Make changes in the configuration file: **/scripts/config.py** (for guidance, see comments and examples in **config.py**)
