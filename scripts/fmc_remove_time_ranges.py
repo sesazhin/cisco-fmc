@@ -12,8 +12,8 @@
 # Version: 0.1
 # Release Date: 26/11/2021
 
-# What it scripts does:
-# 1. Get all time-ranges from file with ASA's configuration (file_to_parse_name). A
+# What this script does:
+# 1. Get all time-ranges from file with ASA's configuration (file_to_parse_name).
 # ASA's configuration contains all time-ranges that has to be removed from FMC
 # 2. Gets all time-ranges from FMC
 # 3. Removes all time-ranges from FMC that exists on ASA

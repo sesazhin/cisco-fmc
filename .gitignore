@@ -127,4 +127,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-/scripts/config.py
+/scripts/config_backup.py
+/scripts/fmc_acp_logging.log
+/scripts/fmc_acp_logging.log*

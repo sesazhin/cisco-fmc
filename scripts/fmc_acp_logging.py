@@ -12,7 +12,7 @@
 # Version: 0.1
 # Release Date: 12/01/2022
 
-# What it scripts does:
+# What this script does:
 # 1. Takes Access Control Policy (ACP) name
 # 2. Gets all access control rules for a specified ACP
 # 3. Disables or enables logging in all* rules for a specified ACP
@@ -28,12 +28,13 @@ from typing import Dict
 import warnings
 
 from pprint import pprint
-from dataclasses import dataclass
 
+global config_file_name
+config_file_name = 'config.py'
 try:
     import config
 except ModuleNotFoundError:
-    print("Error: Not able to find config.py file in a directory with a script. Exiting.")
+    print(f"Error: Not able to find {config_file_name} file in a directory with a script. Exiting.")
     sys.exit(1)
 
 log_formatter = logging.Formatter('%(asctime)s - line %(lineno)s - %(funcName)s - %(levelname)s: %(message)s')
@@ -65,33 +66,6 @@ except PermissionError:
     log.exception(f'Unable to create log file: {LOGFILE}.\nLogs not saved!')
 
 warnings.filterwarnings('ignore', message='Unverified HTTPS request')
-
-
-@dataclass
-class AccessRule:
-    acp_name: str
-    acp_id: str
-    rule_name: str
-    rule_id: str
-    access_rule_dict: Dict
-
-    def set_access_rule_dict(self, input_dict: Dict):
-        self.access_rule_dict = input_dict
-
-    def get_acp_name(self) -> str:
-        return self.acp_name
-
-    def get_acp_id(self) -> str:
-        return self.acp_id
-
-    def get_rule_name(self) -> str:
-        return self.rule_name
-
-    def get_rule_id(self) -> str:
-        return self.rule_id
-
-    def get_access_rule_dict(self) -> Dict:
-        return self.access_rule_dict
 
 
 class FMC:
@@ -294,14 +268,14 @@ class FMC:
 
         return fmc_acp_id
 
-    def get_acp_rules(self, acp_name: str, acp_id: str, logging_set_to: bool) -> List:
+    def get_acp_rules_update_dict(self, acp_name: str, acp_id: str, logging_set_to: bool) -> List:
         api_path = "https://" + self.fmc_ip + "/api/fmc_config/v1/domain/" + \
                    self.domain + "/policy/accesspolicies/" + acp_id + "/accessrules"
 
         bulk_rule_list = []
 
-        log.info(f'Retrieving access rule for ACP with name \'{acp_name}\' from FMC\n'
-                 f'Please Wait (might take a couple of minutes)...')
+        log.info(f'Retrieving access rules for ACP with name \'{acp_name}\' from FMC\n'
+                 f'Please Wait... (might take a couple of minutes)')
         fmc_acp_rules = self.get(api_path)
 
         if fmc_acp_rules[0].status_code == 200:
@@ -309,6 +283,14 @@ class FMC:
                 log.error(f'No access rules in ACP with name {acp_name}')
                 sys.exit(1)
             else:
+
+                total_rules_number = 0
+
+                for response_page in fmc_acp_rules:
+                    total_rules_number += len(response_page.json()['items'])
+
+                log.info(f'Found {total_rules_number} rules in ACP \'{acp_name}\'')
+
                 rules_counter = 0
                 for response_page in fmc_acp_rules:
                     for fmc_access_rule in response_page.json()['items']:
@@ -329,10 +311,11 @@ class FMC:
                                                      'enableSyslog': enableSyslog, 'sendEventsToFMC': sendEventsToFMC}
 
                         if self.is_required_to_change_log(rule_action, logging_set_to, fmc_access_rule_to_update):
-                            log.info(f"{rules_counter}: Changing logging for rule_name: {rule_name}")
-                            fmc_access_rule = self.update_logging_acp_rules(acp_id, rule_id, acp_name,
-                                                                            fmc_access_rule, logging_set_to)
+                            log.info(f"{rules_counter}: Changing logging for rule_name: '{rule_name}'")
+
+                            fmc_access_rule = self.update_logging_acp_rules(fmc_access_rule, logging_set_to)
                             bulk_rule_list.append(fmc_access_rule)
+
                         else:
                             log.info(f"{rules_counter}: No need to change logging for rule_name: {rule_name}")
 
@@ -342,57 +325,13 @@ class FMC:
                                      f'logFiles: {logFiles}, enableSyslog: {enableSyslog}, '
                                      f'sendEventsToFMC: {sendEventsToFMC}')
 
-                log.info(f"Out of {rules_counter} rules {len(bulk_rule_list)} would be changed")
+                log.info(f"{len(bulk_rule_list)} rules out of {rules_counter} would be updated")
 
         else:
             log.error(f'Received status code: {fmc_acp_rules[0].status_code}. '
-                          f'The following error has occured: {fmc_acp_rules[0].text}')
+                          f'The following error has occurred: {fmc_acp_rules[0].text}')
 
         return bulk_rule_list
-
-    def __get_acp_rules(self, acp_name: str, acp_id: str) -> List:
-        api_path = "https://" + self.fmc_ip + "/api/fmc_config/v1/domain/" + \
-                   self.domain + "/policy/accesspolicies/" + acp_id + "/accessrules"
-
-        fmc_all_access_rules_list = []
-
-        log.info(f'Retrieving access rule for ACP with name \'{acp_name}\' from FMC\n'
-                 f'Please Wait (might take a couple of minutes)...')
-        fmc_acp_rules = self.get(api_path)
-
-        if fmc_acp_rules[0].status_code == 200:
-            if len(fmc_acp_rules) == 1 and fmc_acp_rules[0].json()['paging'].get('count') == 0:
-                log.error(f'No access rules in ACP with name {acp_name}')
-                sys.exit(1)
-            else:
-                for response_page in fmc_acp_rules:
-
-                    for fmc_access_rule in response_page.json()['items']:
-                        # pprint(fmc_access_rule)
-                        name = fmc_access_rule['name']
-                        logging_end = fmc_access_rule['logEnd']
-                        rule_id = fmc_access_rule['id']
-                        rule_action = fmc_access_rule['action']
-
-                        logEnd = fmc_access_rule['logEnd']
-                        logBegin = fmc_access_rule['logBegin']
-                        logFiles = fmc_access_rule['logFiles']
-                        enableSyslog = fmc_access_rule['enableSyslog']
-                        sendEventsToFMC = fmc_access_rule['sendEventsToFMC']
-
-                        # pprint(fmc_access_rule)
-                        log.info(f'rule name: {name}, logging_end: {logging_end}, rule_id: {rule_id}, '
-                                     f'rule_action: {rule_action}, logEnd: {logEnd}, logBegin: {logBegin}, '
-                                     f'logFiles: {logFiles}, enableSyslog: {enableSyslog}, '
-                                     f'sendEventsToFMC: {sendEventsToFMC}')
-
-                        fmc_all_access_rules_list.append([name, logging_end, rule_id, rule_action, logEnd,
-                                                          logBegin, logFiles, enableSyslog, sendEventsToFMC])
-        else:
-            log.error(f'Received status code: {fmc_acp_rules[0].status_code}. '
-                          f'The following error has occured: {fmc_acp_rules[0].text}')
-
-        return fmc_all_access_rules_list
 
     @staticmethod
     def is_required_to_change_log(rule_action, logging_set_to: bool, fmc_access_rule_to_update: Dict):
@@ -433,17 +372,8 @@ class FMC:
 
         return is_required_to_change_log
 
-    def update_logging_acp_rules(self, acp_id: str, rule_id: str, acp_name: str,
-                                 fmc_access_rule: Dict, logging_set_to: bool) -> Dict:
-        api_path = "https://" + self.fmc_ip + "/api/fmc_config/v1/domain/" + \
-                   self.domain + "/policy/accesspolicies/" + \
-                   acp_id + "/accessrules/" + rule_id
-
-        log.info(f'api_path: {api_path}')
-
-        log.info(f'Retrieving access rule for ACP with name {acp_name} and '
-                     f'rule_id: {rule_id} from FMC\nPlease Wait...')
-
+    @staticmethod
+    def update_logging_acp_rules(fmc_access_rule: Dict, logging_set_to: bool) -> Dict:
         fmc_access_rule_to_update = fmc_access_rule
 
         rule_action = fmc_access_rule.get("action")
@@ -481,112 +411,100 @@ class FMC:
         fmc_access_rule_to_update.pop('links')
         return fmc_access_rule_to_update
 
-    def __update_logging_acp_rules(self, access_rule_obj: AccessRule, logging_set_to: bool) -> None:
-        api_path = "https://" + self.fmc_ip + "/api/fmc_config/v1/domain/" + \
-                   self.domain + "/policy/accesspolicies/" + \
-                   access_rule_obj.acp_id + "/accessrules/" + access_rule_obj.rule_id
-
-        log.info(f'api_path: {api_path}')
-
-        log.info(f'Retrieving access rule for ACP with name {access_rule_obj.acp_name} and '
-                     f'rule_id: {access_rule_obj.rule_id} from FMC\nPlease Wait...')
-        fmc_access_rule = self.get_by_id(api_path)
-
-        fmc_access_rule_to_update = fmc_access_rule
-
-        # pprint(fmc_access_rule_to_update)
-
-        rule_action = fmc_access_rule.get("action")
-
-        if rule_action in ['ALLOW', 'TRUST', 'BLOCK_INTERACTIVE', 'BLOCK_RESET_INTERACTIVE', 'BLOCK', 'BLOCK_RESET']:
-            # if enable logging for access rule
-            if logging_set_to:
-                if rule_action in ['ALLOW', 'TRUST', 'BLOCK_INTERACTIVE', 'BLOCK_RESET_INTERACTIVE']:
-                    # enable logging for only "Log at End of Connection" - if it's allow and similar actions
-                    fmc_access_rule_to_update['logEnd'] = True
-                    fmc_access_rule_to_update['logBegin'] = False
-                    fmc_access_rule_to_update['sendEventsToFMC'] = True
-                else:
-                    # otherwise - enable logging for only "Log at Beginning of Connection"
-                    fmc_access_rule_to_update['logEnd'] = False
-                    fmc_access_rule_to_update['logBegin'] = True
-                    fmc_access_rule_to_update['sendEventsToFMC'] = True
-
-            # if disable logging for access rule
-            else:
-                # disable all logging for access rule
-                fmc_access_rule_to_update['logEnd'] = False
-                fmc_access_rule_to_update['logBegin'] = False
-                fmc_access_rule_to_update['logFiles'] = False
-                fmc_access_rule_to_update['enableSyslog'] = False
-                fmc_access_rule_to_update['sendEventsToFMC'] = False
-
-            fmc_access_rule_to_update.pop('metadata')
-            fmc_access_rule_to_update.pop('links')
-            access_rule_obj.set_access_rule_dict(fmc_access_rule_to_update)
-
-        elif rule_action == 'MONITOR':
-            pass
-
-        else:
-            log.error(f'Incorrect rule_action get: {rule_action}')
-
-    def put_logging_acp_rules(self, acp_id: str, bulk_rule_list: List) -> None:
+    def put_logging_acp_rules(self, acp_id: str, bulk_rule_list: List) -> Dict:
         api_path = "https://" + self.fmc_ip + "/api/fmc_config/v1/domain/" + \
                    self.domain + "/policy/accesspolicies/" + \
                    acp_id + "/accessrules?bulk=true"
 
         response = self.put(api_path, json.dumps(bulk_rule_list))
-        log.info(f'put response for bulk request:\n'
+        log.debug(f'put response for bulk request:\n'
                      f'{response}')
+
+        return response
 
 
 def main():
     log.info("################################################")
-    log.info(f"Got the following parameters from config.py:\n"
-             f"log_path: {config.log_path}\n"
-             f"log_level: {config.log_level}\n"
-             f"fmc_ip: {config.fmc_ip}\n"
-             f"fmc_username: {config.fmc_username}\n"
-             f"acp_name: {config.acp_name}\n"
-             f"logging_mode: {config.logging_mode}")
+    log.info(f"Got the following parameters from {config_file_name}:")
+    log.info(f"log_path: '{config.log_path}'")
+    log.info(f"log_level: '{config.log_level}'")
+    log.info(f"fmc_ip: '{config.fmc_ip}'")
+    log.info(f"fmc_username: '{config.fmc_username}'")
+    log.info(f"acp_name: '{config.acp_name}'")
+    log.info(f"logging_mode: '{config.logging_mode}'")
     log.info("################################################")
 
-    acp_name = config.acp_name
+    if not config.log_path or not config.log_level or not config.fmc_ip or \
+            not config.fmc_username or not config.acp_name or not config.logging_mode:
+        log.error(f'Some of parameters in {config_file_name} is not specified. '
+                  f'Please check the list above and make changes in {config_file_name}')
 
-    if config.logging_mode == 'enable':
-        disable_access_rule_logging = False
-    elif config.logging_mode == 'disable':
-        disable_access_rule_logging = True
     else:
-        log.error(f'Incorrect value of "logging_mode" specified in config.py. '
-                      f'Must be \'enable\' or \'disable\'. Found: \'{config.logging_mode}\'')
-        sys.exit(1)
 
-    fmc_obj = FMC(config.fmc_ip, config.fmc_username, config.fmc_password)
+        acp_name = config.acp_name
 
-    # Get ACP id from FMC:
-    acp_id = fmc_obj.get_fmc_acp_id(acp_name)
-
-    if not acp_id:
-        log.info(f'No ACP with name {acp_name} found')
-        sys.exit(1)
-    else:
-        log.info(f'name: {acp_name}')
-        log.debug(f'acp_id: {acp_id}')
-        bulk_rule_list = fmc_obj.get_acp_rules(acp_name, acp_id, not disable_access_rule_logging)
-
-        total_rules_to_update = len(bulk_rule_list)
-
-        if total_rules_to_update > 0:
-            n = 1000
-            bulk_rule_list_list = [bulk_rule_list[i:i + n] for i in range(0, len(bulk_rule_list), n)]
-            for counter, bulk_rule_list in enumerate(bulk_rule_list_list):
-                log.info(f"Putting page #{counter+1} of {total_rules_to_update} access rules. "
-                         f"{round(n*counter*100/total_rules_to_update)} % done")
-                fmc_obj.put_logging_acp_rules(acp_id, bulk_rule_list)
+        if config.logging_mode == 'enable':
+            disable_access_rule_logging = False
+        elif config.logging_mode == 'disable':
+            disable_access_rule_logging = True
         else:
-            log.info("No access rules to update. Exiting.")
+            log.error(f'Incorrect value of "logging_mode" specified in {config_file_name}. '
+                          f'Must be \'enable\' or \'disable\'. Found: \'{config.logging_mode}\'')
+            sys.exit(1)
+
+        fmc_obj = FMC(config.fmc_ip, config.fmc_username, config.fmc_password)
+
+        # Get ACP id from FMC:
+        acp_id = fmc_obj.get_fmc_acp_id(acp_name)
+
+        if not acp_id:
+            log.info(f'No ACP with name {acp_name} found')
+            sys.exit(1)
+        else:
+            log.debug(f'acp_name: {acp_name}')
+            log.debug(f'acp_id: {acp_id}')
+            bulk_rule_list = fmc_obj.get_acp_rules_update_dict(acp_name, acp_id, not disable_access_rule_logging)
+
+            total_rules_to_update = len(bulk_rule_list)
+
+            put_chunk_size = 1000
+            if total_rules_to_update > 0:
+                total_updated_rules_number = 0
+                bulk_rule_list_list = [bulk_rule_list[i:i + put_chunk_size]
+                                       for i in range(0, len(bulk_rule_list), put_chunk_size)]
+                for counter, bulk_rule_list in enumerate(bulk_rule_list_list):
+                    log.info(f"Putting page #{counter+1} of {total_rules_to_update} access rules. "
+                             f"{round(put_chunk_size*counter*100/total_rules_to_update)} % done")
+                    put_response = fmc_obj.put_logging_acp_rules(acp_id, bulk_rule_list)
+                    put_response_error = put_response.get('error', '')
+                    if not put_response_error:
+                        updated_rules_number = len(put_response.get('items', []))
+
+                        (lambda x, y: x if x < y else y)(total_rules_to_update, put_chunk_size)
+
+                        if updated_rules_number == (lambda x, y: x if x < y else y)(total_rules_to_update, put_chunk_size):
+                            log.info(f"Successfully updated {updated_rules_number} access rules")
+                            total_updated_rules_number += updated_rules_number
+                        else:
+                            log.error(f"{updated_rules_number} rules has been updated which doesn\'t equal to "
+                                      f"a page size: "
+                                      f"{(lambda x, y: x if x < y else y)(total_rules_to_update, put_chunk_size)}. "
+                                      f"Some of them might be not updated. Please check manually.")
+                    else:
+                        put_error_message = put_response.get('error', '').get('messages')[0].get('description')
+                        log.error(f"The following error has occurred while trying to update page #{counter+1}: "
+                                  f"'{put_error_message}'")
+
+                if total_updated_rules_number == total_rules_to_update:
+                    if total_rules_to_update > put_chunk_size:
+                        log.info(f'Successfully updated all {total_rules_to_update} access rules')
+                else:
+                    log.error(f'Not all rules has been updated. '
+                              f'Updated rules: {total_updated_rules_number} total rules: {total_rules_to_update}. '
+                              f'Please check the log above for errors.')
+
+            else:
+                log.info("No access rules to update. Exiting.")
 
 
 if __name__ == '__main__':
