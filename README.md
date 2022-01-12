@@ -1,7 +1,7 @@
 # cisco-fmc
 Scripts for communication with Cisco FMC via API
 These scripts have been written and tested with Python 3.10 but should work with Python 3.6 and newer versions as well.<br>
-They're is only supported on Windows (it might also work on Linux and macOS but hasn't been tested there).
+They're is only supported on Windows (might work on Linux and macOS but haven't been tested there).
 
 ## /scripts/fmc_acp_logging.py
 What this script does:
