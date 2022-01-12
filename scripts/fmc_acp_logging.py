@@ -18,10 +18,10 @@
 # 3. Disables or enables logging in all* rules for a specified ACP
 # *those rules that already have logging configured in a right way - skipped
 
-import config
 import json
 import logging.handlers
 import requests
+from requests.auth import HTTPBasicAuth
 import sys
 from typing import List
 from typing import Dict
@@ -29,6 +29,12 @@ import warnings
 
 from pprint import pprint
 from dataclasses import dataclass
+
+try:
+    import config
+except ModuleNotFoundError:
+    print("Error: Not able to find config.py file in a directory with a script. Exiting.")
+    sys.exit(1)
 
 log_formatter = logging.Formatter('%(asctime)s - line %(lineno)s - %(funcName)s - %(levelname)s: %(message)s')
 log_level = config.log_level
@@ -119,7 +125,7 @@ class FMC:
         auth_url = "https://" + self.fmc_ip + api_auth_path
 
         try:
-            r = requests.post(auth_url, headers=self.headers, auth=requests.auth.HTTPBasicAuth(
+            r = requests.post(auth_url, headers=self.headers, auth=HTTPBasicAuth(
                 self.fmc_username, self.fmc_password), verify=False)
             self.auth_headers = r.headers
             self.auth_token = self.auth_headers.get('X-auth-access-token', default=None)
@@ -193,20 +199,6 @@ class FMC:
                 r = requests.put(api_url, headers=self.headers, data=body, verify=False)
 
         return r.json()
-
-        '''
-        if 'paging' in payload.keys():
-    
-            # while 'items' in payload.keys() and 'next' in payload['paging']:
-            while 'items' in payload.keys():
-                param['offset'] = str(int(param['offset']) + chunk_size)
-                response_page = get_request(fmc_ip, fmc_username, fmc_password, api_url, param)
-                payload = response_page.json()
-                if payload.get('items'):
-                    responses.append(response_page)
-        '''
-
-        return payload
 
     def get_request(self, api_url: str, param: Dict):
         r = requests.get(api_url, headers=self.headers, params=param, verify=False)
@@ -308,7 +300,8 @@ class FMC:
 
         bulk_rule_list = []
 
-        log.info(f'Retrieving access rule for ACP with name {acp_name} from FMC\nPlease Wait...')
+        log.info(f'Retrieving access rule for ACP with name \'{acp_name}\' from FMC\n'
+                 f'Please Wait (might take a couple of minutes)...')
         fmc_acp_rules = self.get(api_path)
 
         if fmc_acp_rules[0].status_code == 200:
@@ -321,36 +314,30 @@ class FMC:
                     for fmc_access_rule in response_page.json()['items']:
                         rules_counter += 1
                         # pprint(fmc_access_rule)
-                        rule_name = fmc_access_rule['name']
-                        logging_end = fmc_access_rule['logEnd']
-                        rule_id = fmc_access_rule['id']
-                        rule_action = fmc_access_rule['action']
+                        rule_name = fmc_access_rule.get('name', '')
+                        rule_id = fmc_access_rule.get('id', '')
+                        rule_action = fmc_access_rule.get('action', '')
 
-                        logEnd = fmc_access_rule['logEnd']
-                        logBegin = fmc_access_rule['logBegin']
-                        logFiles = fmc_access_rule['logFiles']
-                        enableSyslog = fmc_access_rule['enableSyslog']
-                        sendEventsToFMC = fmc_access_rule['sendEventsToFMC']
+                        logEnd = fmc_access_rule.get('logEnd', '')
+                        logBegin = fmc_access_rule.get('logBegin', '')
+                        logFiles = fmc_access_rule.get('logFiles', '')
+                        enableSyslog = fmc_access_rule.get('enableSyslog', '')
+                        sendEventsToFMC = fmc_access_rule.get('sendEventsToFMC', '')
 
                         # will need to get the following fields:
-                        fmc_access_rule_to_update = {}
-                        fmc_access_rule_to_update['logEnd'] = logEnd
-                        fmc_access_rule_to_update['logBegin'] = logBegin
-                        fmc_access_rule_to_update['logFiles'] = logFiles
-                        fmc_access_rule_to_update['enableSyslog'] = enableSyslog
-                        fmc_access_rule_to_update['sendEventsToFMC'] = sendEventsToFMC
+                        fmc_access_rule_to_update = {'logEnd': logEnd, 'logBegin': logBegin, 'logFiles': logFiles,
+                                                     'enableSyslog': enableSyslog, 'sendEventsToFMC': sendEventsToFMC}
 
-                        if self.is_required_to_change_log(rule_action, logging_set_to,
-                                                             fmc_access_rule_to_update):
-                            log.info(f"Changing logging for rule_name: {rule_name}")
+                        if self.is_required_to_change_log(rule_action, logging_set_to, fmc_access_rule_to_update):
+                            log.info(f"{rules_counter}: Changing logging for rule_name: {rule_name}")
                             fmc_access_rule = self.update_logging_acp_rules(acp_id, rule_id, acp_name,
                                                                             fmc_access_rule, logging_set_to)
                             bulk_rule_list.append(fmc_access_rule)
                         else:
-                            log.info(f"No need to change logging for rule_name: {rule_name}")
+                            log.info(f"{rules_counter}: No need to change logging for rule_name: {rule_name}")
 
                         # pprint(fmc_access_rule)
-                        log.info(f'rule name: {rule_name}, logging_end: {logging_end}, rule_id: {rule_id}, '
+                        log.debug(f'rule name: {rule_name}, rule_id: {rule_id}, '
                                      f'rule_action: {rule_action}, logEnd: {logEnd}, logBegin: {logBegin}, '
                                      f'logFiles: {logFiles}, enableSyslog: {enableSyslog}, '
                                      f'sendEventsToFMC: {sendEventsToFMC}')
@@ -369,7 +356,8 @@ class FMC:
 
         fmc_all_access_rules_list = []
 
-        log.info(f'Retrieving access rule for ACP with name {acp_name} from FMC\nPlease Wait...')
+        log.info(f'Retrieving access rule for ACP with name \'{acp_name}\' from FMC\n'
+                 f'Please Wait (might take a couple of minutes)...')
         fmc_acp_rules = self.get(api_path)
 
         if fmc_acp_rules[0].status_code == 200:
@@ -510,8 +498,6 @@ class FMC:
 
         rule_action = fmc_access_rule.get("action")
 
-        # log.info(f'rule_action: {rule_action}')
-
         if rule_action in ['ALLOW', 'TRUST', 'BLOCK_INTERACTIVE', 'BLOCK_RESET_INTERACTIVE', 'BLOCK', 'BLOCK_RESET']:
             # if enable logging for access rule
             if logging_set_to:
@@ -554,114 +540,19 @@ class FMC:
         log.info(f'put response for bulk request:\n'
                      f'{response}')
 
-        '''
-        print('###########################')
-        pprint(f'fmc_access_rule_to_update:\n{fmc_access_rule_to_update}')
-        print('###########################')
-        '''
-
-        # fmc_access_rule_to_update = {'action': 'ALLOW', 'logBegin': False, 'logEnd': False}
-
-        '''
-        response = self.put(api_path, json.dumps(fmc_access_rule_to_update))
-        log.info(f'put response for "{access_rule_obj.rule_name}":\n'
-                     f'{response}')
-        '''
-
-
-'''
-class AccessRule(FMC):
-    def __init__(self, fmc_ip: str, fmc_username: str, fmc_password: str):
-        super().__init__(fmc_ip, fmc_username, fmc_password)
-'''
-
-'''
-def del_time_range(fmc_ip: str, fmc_username: str, fmc_password: str, name: str, del_url: str) -> bool:
-    time_range_removed = False
-
-    try:
-        r = requests.delete(del_url, headers=headers, verify=False)
-        status_code = r.status_code
-        resp = r.json()
-
-        if status_code == 200 or status_code == 201:
-            log.debug(f"Successfully removed {name}")
-            time_range_removed = True
-
-        elif status_code == 401:
-            if 'Access token invalid' in str(resp):
-                logging.warning(f"Refreshing API token")
-                refresh(fmc_ip, fmc_username, fmc_password)
-                time_range_removed = del_time_range(fmc_ip, fmc_username, fmc_password, name, del_url)
-
-        else:
-            log.error(f'status_code: {status_code}, '
-                          f'error description: ({resp["error"]["messages"][0]["description"]})')
-
-        return time_range_removed
-
-    except requests.exceptions.HTTPError as err:
-        log.error("Error in connection --> " + str(err))
-
-    finally:
-        if r:
-            r.close()
-
-
-def del_fmc_all_time_ranges(fmc_ip: str, fmc_username: str, fmc_password: str, list_time_ranges_to_del: List) -> List:
-    number_of_ranges_to_del = len(list_time_ranges_to_del)
-    list_of_time_ranges_unable_to_remove = []
-
-    for counter, time_range in enumerate(list_time_ranges_to_del, start=1):
-        name = time_range[0]
-        link = time_range[1]
-
-        if del_time_range(fmc_ip, fmc_username, fmc_password, name, link):
-            log.info(f'fmc: removed time-range: {name}')
-        else:
-            logging.warning(f'fmc: unable to remove time-range: {name}')
-            list_of_time_ranges_unable_to_remove.append(name)
-
-        if counter % 10 == 0:
-            log.info(f'number of time-ranges to remove: {number_of_ranges_to_del - counter}')
-        else:
-            pass
-
-    return list_of_time_ranges_unable_to_remove
-
-
-def get_fmc_all_time_ranges_list(fmc_ip: str, fmc_username: str, fmc_password: str, domain: str) -> List:
-    api_path = "https://" + fmc_ip + "/api/fmc_config/v1/domain/" + \
-               domain + "/object/timeranges"
-
-    fmc_all_time_range_list = []
-    time_range_counter = 0
-
-    log.info('Retrieving all time-ranges from FMC\nPlease Wait...')
-    all_fmc_time_ranges = get(fmc_ip, fmc_username, fmc_password, api_path)
-
-    if len(all_fmc_time_ranges) == 1 and all_fmc_time_ranges[0].json()['paging'].get('count') == 0:
-        log.error('No time-ranges present on FMC')
-        exit(1)
-    else:
-        for response_page in all_fmc_time_ranges:
-
-            for fmc_time_range in response_page.json()['items']:
-                name = fmc_time_range['name']
-                links = fmc_time_range['links']['self']
-                fmc_all_time_range_list.append([name, links])
-                log.debug(f'{time_range_counter + 1}: name: {name}, links: {links}')
-
-                time_range_counter += 1
-
-    return fmc_all_time_range_list
-'''
-
 
 def main():
-    acp_name = config.acp_name
+    log.info("################################################")
+    log.info(f"Got the following parameters from config.py:\n"
+             f"log_path: {config.log_path}\n"
+             f"log_level: {config.log_level}\n"
+             f"fmc_ip: {config.fmc_ip}\n"
+             f"fmc_username: {config.fmc_username}\n"
+             f"acp_name: {config.acp_name}\n"
+             f"logging_mode: {config.logging_mode}")
+    log.info("################################################")
 
-    # config.acp_name =
+    acp_name = config.acp_name
 
     if config.logging_mode == 'enable':
         disable_access_rule_logging = False
@@ -681,104 +572,21 @@ def main():
         log.info(f'No ACP with name {acp_name} found')
         sys.exit(1)
     else:
-        log.info(f'name: {acp_name}, acp_id: {acp_id}')
+        log.info(f'name: {acp_name}')
+        log.debug(f'acp_id: {acp_id}')
         bulk_rule_list = fmc_obj.get_acp_rules(acp_name, acp_id, not disable_access_rule_logging)
 
-        if len(bulk_rule_list) > 0:
+        total_rules_to_update = len(bulk_rule_list)
+
+        if total_rules_to_update > 0:
             n = 1000
             bulk_rule_list_list = [bulk_rule_list[i:i + n] for i in range(0, len(bulk_rule_list), n)]
             for counter, bulk_rule_list in enumerate(bulk_rule_list_list):
-                log.info(f"Putting page #{counter+1} of {len(bulk_rule_list)} access rules")
+                log.info(f"Putting page #{counter+1} of {total_rules_to_update} access rules. "
+                         f"{round(n*counter*100/total_rules_to_update)} % done")
                 fmc_obj.put_logging_acp_rules(acp_id, bulk_rule_list)
         else:
             log.info("No access rules to update. Exiting.")
-
-        '''
-        # pprint(fmc_acp_rules)
-
-        access_rule_obj_list = []
-        for acp_rule in fmc_acp_rules:
-            fmc_access_rule_to_update = {}
-            rule_name = acp_rule[0]
-            rule_id = acp_rule[2]
-            rule_action = acp_rule[3]
-
-            # will need to get the following fields:
-            fmc_access_rule_to_update['logEnd'] = acp_rule[4]
-            fmc_access_rule_to_update['logBegin'] = acp_rule[5]
-            fmc_access_rule_to_update['logFiles'] = acp_rule[6]
-            fmc_access_rule_to_update['enableSyslog'] = acp_rule[7]
-            fmc_access_rule_to_update['sendEventsToFMC'] = acp_rule[8]
-
-            if fmc_obj.is_required_to_change_log(rule_action, not disable_access_rule_logging,
-                                                 fmc_access_rule_to_update):
-                log.info(f"Changing logging for rule_name: {rule_name}")
-                access_rule_obj_list.append(AccessRule(acp_name, acp_id, rule_name, rule_id, {}))
-            else:
-                log.info(f"No need to change logging for rule_name: {rule_name}")
-
-        for acp_rule_obj in access_rule_obj_list:
-            fmc_obj.update_logging_acp_rules(acp_rule_obj, not disable_access_rule_logging)
-
-        bulk_rule_list = []
-        for access_rule_obj in access_rule_obj_list:
-            rule_dict = access_rule_obj.get_access_rule_dict()
-            bulk_rule_list.append(rule_dict)
-
-        if len(bulk_rule_list) > 0:
-            fmc_obj.put_logging_acp_rules(acp_id, bulk_rule_list)
-        else:
-            log.info("No access rules to update. Exiting.")
-        '''
-
-
-    '''
-    # Get all ACPs from FMC:
-    list_all_fmc_acp = get_fmc_all_acp(fmc_ip, username, password, domain)
-    log.info(f'Number of ACPs on FMC: {len(list_all_fmc_acp)}')
-    log.info(list_all_fmc_acp)
-
-
-    # Compare all time-ranges from FMC to time-ranges from ASA's config:
-    list_fmc_time_ranges_to_del = get_time_ranges_to_del_list(list_all_fmc_time_ranges, list_asa_time_ranges_to_del)
-    log.debug(f'time-ranges to remove from FMC: {list_fmc_time_ranges_to_del}')
-    log.info(f'number of time-ranges to remove from FMC: {len(list_fmc_time_ranges_to_del)}')
-
-    # Delay for 1 second to let logging module output all to console:
-    time.sleep(1)
-
-    input_chars_not_correct = True
-    answer = ''
-
-    while input_chars_not_correct:
-        answer = input(f"Do you want to remove {len(list_fmc_time_ranges_to_del)} time-ranges from FMC? (y/n): ")
-        answer = answer.lower()
-
-        if answer not in ['y', 'n']:
-            continue
-        else:
-            input_chars_not_correct = False
-
-    if answer == 'y':
-        # Remove from FMC time-ranges found in ASA's configuration:
-        list_of_time_ranges_unable_to_remove = \
-            del_fmc_all_time_ranges(fmc_ip, username, password, list_fmc_time_ranges_to_del)
-
-        # Check whether all time-ranges have been removed:
-        if list_of_time_ranges_unable_to_remove:
-            logging.warning(f'There are time-ranges that script wasn\'t able to remove from FMC:')
-            for time_range_name in list_of_time_ranges_unable_to_remove:
-                logging.warning(f'time-range not removed: {time_range_name}')
-        else:
-            pass
-
-        # Get all time-ranges from FMC after removal:
-        list_all_fmc_time_ranges = get_fmc_all_time_ranges_list(fmc_ip, username, password, domain)
-        log.info(f'Number of time-ranges on FMC after time-ranges removal: {len(list_all_fmc_time_ranges)}.')
-        log.debug(list_all_fmc_time_ranges)
-    else:
-        log.info(f'You\'ve chosen not to remove time-ranges from FMC.')
-    '''
 
 
 if __name__ == '__main__':
