@@ -12,7 +12,7 @@ What this script does:
 
 For required libraries and their versions see **requirements.txt**.
 
-## How to use /scripts/fmc_acp_logging.log
+## How to use /scripts/fmc_acp_logging.py
 1. Start from cloning script to your system:
 `git clone https://github.com/sesazhin/cisco-fmc.git`
 
@@ -22,7 +22,7 @@ For required libraries and their versions see **requirements.txt**.
 3. Make changes in the configuration file: **/scripts/config.py** (for guidance, see comments and examples in **config.py**)
 
 4. Run the script: 
-`python.exe fmc_acp_logging.log`
+`python.exe fmc_acp_logging.py`
 
 ## /scripts/fmc_remove_time_ranges.py
 What this script does:
