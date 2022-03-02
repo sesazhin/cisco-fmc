@@ -22,6 +22,7 @@ import logging.handlers
 import requests
 from requests.auth import HTTPBasicAuth
 import sys
+from datetime import datetime
 from typing import List
 from typing import Dict
 import warnings
@@ -159,7 +160,7 @@ class FMC:
         if r.status_code == 401:
             if 'Access token invalid' in str(r.json()):
                 self.refresh()
-                r = requests.get(api_url, headers=self.headers, verify=False)
+                r = requests.get_by_id(api_url, headers=self.headers, verify=False)
 
         return r.json()
 
@@ -267,6 +268,38 @@ class FMC:
 
         return fmc_acp_id
 
+    def get_time_range_by_id(self, time_range_id: str):
+        # time_range_link = f"/api/fmc_config/v1/domain/{self.domain}/object/timeranges/{time_range_id}"
+
+        api_path = "https://" + self.fmc_ip + "/api/fmc_config/v1/domain/" + \
+                   self.domain + "/object/timeranges/" + time_range_id
+
+        return self.get_by_id(api_path)
+
+    @staticmethod
+    def is_time_passed(timerange_date: str, days_shift: int) -> bool:
+        #  'time_range_expiration': '2022-03-01T13:00',
+        time_passed = False
+
+        # convert string to datetimeformat
+        timerange_date = datetime.strptime(timerange_date, "%Y-%m-%dT%H:%M")
+
+        # convert datetime to timestamp
+        date = int(datetime.timestamp(timerange_date))
+        log.info(f'Timestamp from timerange fetched: {date}. timerange_date: {timerange_date}')
+
+        # current_timestamp = int(time())
+
+        now = datetime.now()
+        current_timestamp = int(datetime.timestamp(now))
+        current_date_time = now.strftime("%Y-%m-%dT%H:%M")
+        log.info(f'Timestamp now: {current_timestamp}. timerange_date: {current_date_time}')
+
+        if current_timestamp - date > 86400 * days_shift:
+            time_passed = True
+
+        return time_passed
+
     def get_acp_rules_update_dict(self, acp_name: str, acp_id: str, logging_set_to: bool) -> List:
         api_path = "https://" + self.fmc_ip + "/api/fmc_config/v1/domain/" + \
                    self.domain + "/policy/accesspolicies/" + acp_id + "/accessrules"
@@ -295,81 +328,51 @@ class FMC:
                     for fmc_access_rule in response_page.json()['items']:
                         rules_counter += 1
                         # pprint(fmc_access_rule)
+
+                        time_range_list = fmc_access_rule.get('timeRangeObjects', '')
+
                         rule_name = fmc_access_rule.get('name', '')
-                        rule_id = fmc_access_rule.get('id', '')
-                        rule_action = fmc_access_rule.get('action', '')
+                        rule_id = fmc_access_rule.get('metadata', '').get('ruleIndex', '')
 
-                        logEnd = fmc_access_rule.get('logEnd', '')
-                        logBegin = fmc_access_rule.get('logBegin', '')
-                        logFiles = fmc_access_rule.get('logFiles', '')
-                        enableSyslog = fmc_access_rule.get('enableSyslog', '')
-                        sendEventsToFMC = fmc_access_rule.get('sendEventsToFMC', '')
+                        if len(time_range_list) > 0:
+                            time_range_name = time_range_list[0].get('name', '')
+                            time_range_id = time_range_list[0].get('id', '')
 
-                        # will need to get the following fields:
-                        fmc_access_rule_to_update = {'logEnd': logEnd, 'logBegin': logBegin, 'logFiles': logFiles,
-                                                     'enableSyslog': enableSyslog, 'sendEventsToFMC': sendEventsToFMC}
+                            time_range_expiration = \
+                                self.get_time_range_by_id(time_range_id).get('effectiveEndDateTime', '')
 
-                        if self.is_required_to_change_log(rule_action, logging_set_to, fmc_access_rule_to_update):
-                            log.info(f"{rules_counter}: Changing logging for rule_name: '{rule_name}'")
+                            if time_range_expiration != 'Never End':
+                                # will need to get the following fields:
+                                fmc_access_rule_to_update = {'rule_id': rule_id, 'rule_name': rule_name,
+                                                             'time_range_name': time_range_name,
+                                                             'time_range_id': time_range_id,
+                                                             'time_range_expiration': time_range_expiration}
 
-                            fmc_access_rule = self.update_logging_acp_rules(fmc_access_rule, logging_set_to)
-                            bulk_rule_list.append(fmc_access_rule)
+                                pprint(fmc_access_rule_to_update)
 
+                                days_shift = 14
+                                is_time_passed = self.is_time_passed(time_range_expiration, days_shift)
+                                if is_time_passed:
+                                    bulk_rule_list.append(fmc_access_rule_to_update)
+                                    log.info(f'Adding rule with expired time-range: rule_id: {rule_id}, '
+                                             f'rule_name: {rule_name}, expiration time: {time_range_expiration}')
+                                else:
+                                    log.info(f'No need to add rule with non-expired time-range: rule_id: {rule_id}, '
+                                             f'rule_name: {rule_name}, expiration time: {time_range_expiration}')
+                            else:
+                                log.info(f'Skipping rule with time-range that never ends: rule_id: {rule_id}, '
+                                         f'rule_name: {rule_name}')
                         else:
-                            log.info(f"{rules_counter}: No need to change logging for rule_name: {rule_name}")
+                            log.info(f"Skipping rule with no time-range object: "
+                                     f"rule_id: {rule_id}, rule_name: {rule_name}")
 
-                        # pprint(fmc_access_rule)
-                        log.debug(f'rule name: {rule_name}, rule_id: {rule_id}, '
-                                     f'rule_action: {rule_action}, logEnd: {logEnd}, logBegin: {logBegin}, '
-                                     f'logFiles: {logFiles}, enableSyslog: {enableSyslog}, '
-                                     f'sendEventsToFMC: {sendEventsToFMC}')
-
-                log.info(f"{len(bulk_rule_list)} rules out of {rules_counter} would be updated")
+                log.info(f"{len(bulk_rule_list)} rules out of {rules_counter} contain expired time-ranges")
 
         else:
             log.error(f'Received status code: {fmc_acp_rules[0].status_code}. '
-                          f'The following error has occurred: {fmc_acp_rules[0].text}')
+                      f'The following error has occurred: {fmc_acp_rules[0].text}')
 
         return bulk_rule_list
-
-    @staticmethod
-    def is_required_to_change_log(rule_action, logging_set_to: bool, fmc_access_rule_to_update: Dict):
-        is_required_to_change_log = True
-
-        if rule_action in ['ALLOW', 'TRUST', 'BLOCK_INTERACTIVE', 'BLOCK_RESET_INTERACTIVE', 'BLOCK', 'BLOCK_RESET']:
-            # if enable logging for access rule
-            if logging_set_to:
-                if rule_action in ['ALLOW', 'TRUST', 'BLOCK_INTERACTIVE', 'BLOCK_RESET_INTERACTIVE']:
-                    # enable logging for only "Log at End of Connection" - if it's allow and similar actions
-                    if fmc_access_rule_to_update.get('logEnd', False) and \
-                            not fmc_access_rule_to_update.get('logBegin', True) and \
-                            fmc_access_rule_to_update.get('sendEventsToFMC', False):
-                        is_required_to_change_log = False
-                else:
-                    # otherwise - enable logging for only "Log at Beginning of Connection"
-                    if not fmc_access_rule_to_update.get('logEnd', True) and \
-                            fmc_access_rule_to_update.get('logBegin', False) and \
-                            fmc_access_rule_to_update.get('sendEventsToFMC', False):
-                        is_required_to_change_log = False
-
-            # if disable logging for access rule
-            else:
-                # disable all logging for access rule
-                if not fmc_access_rule_to_update.get('logEnd', True) and \
-                        not fmc_access_rule_to_update.get('logBegin', True) and \
-                        not fmc_access_rule_to_update.get('logFiles', True) and \
-                        not fmc_access_rule_to_update.get('enableSyslog', True) and \
-                        not fmc_access_rule_to_update.get('sendEventsToFMC', True):
-                    is_required_to_change_log = False
-
-        elif rule_action == 'MONITOR':
-            is_required_to_change_log = False
-
-        else:
-            log.error(f'Incorrect rule_action get: {rule_action}')
-            is_required_to_change_log = False
-
-        return is_required_to_change_log
 
     @staticmethod
     def update_logging_acp_rules(fmc_access_rule: Dict, logging_set_to: bool) -> Dict:
@@ -462,8 +465,19 @@ def main():
         else:
             log.debug(f'acp_name: {acp_name}')
             log.debug(f'acp_id: {acp_id}')
+
             bulk_rule_list = fmc_obj.get_acp_rules_update_dict(acp_name, acp_id, not disable_access_rule_logging)
 
+            total_rules_to_update = len(bulk_rule_list)
+
+            put_chunk_size = 1000
+            if total_rules_to_update > 0:
+                log.info(f"Found {total_rules_to_update} rules to remove expired time-ranges.")
+
+            else:
+                log.info("No access rules to update. Exiting.")
+
+            """
             total_rules_to_update = len(bulk_rule_list)
 
             put_chunk_size = 1000
@@ -501,9 +515,7 @@ def main():
                     log.error(f'Not all rules has been updated. '
                               f'Updated rules: {total_updated_rules_number} total rules: {total_rules_to_update}. '
                               f'Please check the log above for errors.')
-
-            else:
-                log.info("No access rules to update. Exiting.")
+            """
 
 
 if __name__ == '__main__':
